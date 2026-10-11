@@ -1,8 +1,9 @@
 [project]
 name = "ttr"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A small terminal translator"
 readme = "README.md"
+authors = [{ name = "Noai-oss", email = "jiuwoxiao@outlook.com" }]
 requires-python = ">=3.12"
 dependencies = []
 
@@ -13,11 +14,33 @@ ttr = "ttr.cli:main"
 dev = []
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ttr"]
+artifacts = ["src/ttr/_version.py"]
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["src/ttr/_version.py"]
+
+[tool.hatch.build.hooks.version]
+path = "src/ttr/_version.py"
+template = '''
+# This file is generated at build time. Do not edit manually.
+__version__ = "{version}"
+'''
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
 
 [tool.ruff]
 line-length = 100
