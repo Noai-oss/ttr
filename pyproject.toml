@@ -8,7 +8,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/Noai-oss/ttr"
+Repository = "https://github.com/Noai-oss/ttr"
 
 [project.scripts]
 ttr = "ttr.cli:main"
