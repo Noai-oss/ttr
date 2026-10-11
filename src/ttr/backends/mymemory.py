@@ -11,7 +11,7 @@ MYMEMORY_LANGS = {
     "zh": "zh-CN",
 }
 
-MAX_QUERY_BYTES = 480
+MAX_QUERY_BYTES = 500
 
 
 def api_lang(lang: str) -> str:

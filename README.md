@@ -90,7 +90,7 @@ en	zh	cache	缓存
 
 ## MyMemory Limit
 
-MyMemory requests are capped at 480 UTF-8 bytes. If the input is longer, `ttr` exits with an error instead of splitting it automatically. Split long text yourself or choose another backend.
+MyMemory requests are capped at 500 UTF-8 bytes. If the input is longer, `ttr` exits with an error instead of splitting it automatically. Split long text yourself or choose another backend.
 
 ## Configuration
 
