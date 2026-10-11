@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from .errors import TTRError
 from .lang import normalize_lang
 from .paths import config_file
+
+BACKENDS = ("mymemory", "deepl")
 
 
 @dataclass(frozen=True)
@@ -21,11 +24,6 @@ class DeepLConfig:
 
 
 @dataclass(frozen=True)
-class LibreConfig:
-    url: str = "http://127.0.0.1:5000"
-
-
-@dataclass(frozen=True)
 class CacheConfig:
     enabled: bool = True
 
@@ -37,75 +35,79 @@ class Config:
     backend: str = "mymemory"
     mymemory: MyMemoryConfig = MyMemoryConfig()
     deepl: DeepLConfig = DeepLConfig()
-    libre: LibreConfig = LibreConfig()
     cache: CacheConfig = CacheConfig()
-    path: Path = config_file()
+    path: Path = field(default_factory=config_file)
 
 
-def load_config(path: Path | None = None) -> Config:
+def load_config(path: Path | None = None, *, backend: str | None = None) -> Config:
     cfg_path = path or config_file()
     raw: dict = {}
 
-    if cfg_path.exists():
+    try:
         with cfg_path.open("rb") as handle:
             raw = tomllib.load(handle)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        raise TTRError(f"cannot read config {cfg_path}: {exc}") from exc
 
-    source = env_or_config("TTR_SOURCE_LANG", raw, "source")
-    target = env_or_config("TTR_TARGET_LANG", raw, "target")
-    source = normalize_optional_lang(source) or "en"
-    target = normalize_optional_lang(target) or "zh"
-    backend = str(os.environ.get("TTR_BACKEND") or raw.get("backend") or "mymemory").lower()
+    defaults = Config(path=cfg_path)
+    source = string_setting(raw, "source", "TTR_SOURCE_LANG", defaults.source)
+    target = string_setting(raw, "target", "TTR_TARGET_LANG", defaults.target)
+    selected_backend = (
+        backend
+        if backend is not None
+        else string_setting(raw, "backend", "TTR_BACKEND", defaults.backend)
+    )
+    if selected_backend is None or selected_backend.lower() not in BACKENDS:
+        raise TTRError(f"unknown backend: {selected_backend}; choose {', '.join(BACKENDS)}")
 
-    mymemory_raw = raw.get("mymemory") or {}
-    deepl_raw = raw.get("deepl") or {}
-    libre_raw = raw.get("libre") or {}
-    cache_raw = raw.get("cache") or {}
+    mymemory_raw = config_table(raw, "mymemory")
+    deepl_raw = config_table(raw, "deepl")
+    cache_raw = config_table(raw, "cache")
 
-    cache_enabled = parse_bool(cache_raw.get("enabled"), default=True)
     env_cache = os.environ.get("TTR_CACHE")
     if env_cache is not None:
-        cache_enabled = parse_bool(env_cache, default=True)
+        cache_enabled = parse_bool(env_cache)
+    else:
+        cache_enabled = cache_raw.get("enabled", defaults.cache.enabled)
+        if not isinstance(cache_enabled, bool):
+            raise TTRError("cache.enabled must be a boolean")
 
     return Config(
-        source=source,
-        target=target,
-        backend=backend,
-        mymemory=MyMemoryConfig(
-            email=os.environ.get("TTR_MYMEMORY_EMAIL") or mymemory_raw.get("email")
-        ),
+        source=normalize_lang(source) if source is not None else None,
+        target=normalize_lang(target) if target is not None else None,
+        backend=selected_backend.lower(),
+        mymemory=MyMemoryConfig(email=string_setting(mymemory_raw, "email", "TTR_MYMEMORY_EMAIL")),
         deepl=DeepLConfig(
-            api_key=os.environ.get("TTR_DEEPL_API_KEY") or deepl_raw.get("api_key"),
-            url=os.environ.get("TTR_DEEPL_URL") or deepl_raw.get("url"),
-        ),
-        libre=LibreConfig(
-            url=str(
-                os.environ.get("TTR_LIBRE_URL")
-                or libre_raw.get("url")
-                or "http://127.0.0.1:5000"
-            )
+            api_key=string_setting(deepl_raw, "api_key", "TTR_DEEPL_API_KEY"),
+            url=string_setting(deepl_raw, "url", "TTR_DEEPL_URL"),
         ),
         cache=CacheConfig(enabled=cache_enabled),
         path=cfg_path,
     )
 
 
-def env_or_config(env_name: str, raw: dict, key: str) -> str | None:
-    value = os.environ.get(env_name)
-    if value is not None:
-        return value
-    raw_value = raw.get(key)
-    return str(raw_value) if raw_value is not None else None
+def config_table(raw: dict, key: str) -> dict:
+    value = raw.get(key, {})
+    if not isinstance(value, dict):
+        raise TTRError(f"{key} must be a TOML table")
+    return value
 
 
-def normalize_optional_lang(value: str | None) -> str | None:
-    if value is None or not str(value).strip():
-        return None
-    return normalize_lang(str(value))
-
-
-def parse_bool(value: object, default: bool) -> bool:
+def string_setting(raw: dict, key: str, env_name: str, default: str | None = None) -> str | None:
+    value = os.environ.get(env_name, raw.get(key, default))
     if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+        return None
+    if not isinstance(value, str):
+        raise TTRError(f"{key} must be a string")
+    return value.strip() or None
+
+
+def parse_bool(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise TTRError("TTR_CACHE must be 1/0, true/false, yes/no, or on/off")

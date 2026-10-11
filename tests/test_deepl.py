@@ -1,3 +1,4 @@
+import io
 import json
 import unittest
 from unittest.mock import patch
@@ -13,20 +14,7 @@ from ttr.backends.deepl import (
     target_lang,
 )
 from ttr.errors import BackendError
-
-
-class FakeResponse:
-    def __init__(self, payload: bytes):
-        self.payload = payload
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, traceback):
-        return False
-
-    def read(self) -> bytes:
-        return self.payload
+from ttr.lang import parse_lang_spec
 
 
 class DeepLTests(unittest.TestCase):
@@ -47,6 +35,7 @@ class DeepLTests(unittest.TestCase):
         self.assertEqual(target_lang("en-gb"), "EN-GB")
         self.assertEqual(target_lang("pt-br"), "PT-BR")
         self.assertEqual(target_lang("es-419"), "ES-419")
+        self.assertEqual(target_lang("zh-hant"), "ZH-HANT")
 
     def test_unknown_regional_variant_errors(self):
         with self.assertRaisesRegex(BackendError, "unsupported deepl target language"):
@@ -66,36 +55,66 @@ class DeepLTests(unittest.TestCase):
             DeepLBackend(api_key=None).translate("hello", "en", "zh")
 
     def test_request_shape(self):
-        captured = {}
+        response = io.BytesIO('{"translations":[{"text":"你好"}]}'.encode())
+        with patch("ttr.backends.deepl.urllib.request.urlopen", return_value=response) as urlopen:
+            result = DeepLBackend(api_key="test-key:fx", timeout=3.5).translate("hello", "en", "zh")
 
-        def fake_urlopen(request, timeout):
-            captured["request"] = request
-            captured["timeout"] = timeout
-            return FakeResponse(b'{"translations":[{"text":"\xe4\xbd\xa0\xe5\xa5\xbd"}]}')
-
-        with patch("ttr.backends.deepl.urllib.request.urlopen", fake_urlopen):
-            result = DeepLBackend(api_key="test-key:fx", timeout=3.5).translate(
-                "hello", "en", "zh"
-            )
-
-        request = captured["request"]
+        request = urlopen.call_args.args[0]
         data = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(result.text, "你好")
-        self.assertEqual(result.backend, "deepl")
+        self.assertEqual(result, "你好")
         self.assertEqual(request.full_url, FREE_ENDPOINT)
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.get_header("Authorization"), "DeepL-Auth-Key test-key:fx")
         self.assertEqual(request.get_header("Content-type"), "application/json; charset=utf-8")
         self.assertEqual(request.get_header("User-agent"), "ttr/0.1.0")
         self.assertEqual(data, {"text": ["hello"], "source_lang": "EN", "target_lang": "ZH"})
-        self.assertEqual(captured["timeout"], 3.5)
+        urlopen.assert_called_once_with(request, timeout=3.5)
 
     def test_large_request_errors_before_http(self):
-        with patch("ttr.backends.deepl.urllib.request.urlopen") as urlopen:
-            with self.assertRaisesRegex(BackendError, "request too large"):
-                DeepLBackend(api_key="test-key").translate("a" * MAX_REQUEST_BYTES, "en", "zh")
+        with (
+            patch("ttr.backends.deepl.urllib.request.urlopen") as urlopen,
+            self.assertRaisesRegex(BackendError, "request too large"),
+        ):
+            DeepLBackend(api_key="test-key").translate("a" * MAX_REQUEST_BYTES, "en", "zh")
 
         urlopen.assert_not_called()
+
+    def test_traditional_target_survives_language_parsing(self):
+        pair = parse_lang_spec("en:zh-hant")
+        payload = json.loads(build_payload("hello", pair.source, pair.target))
+        self.assertEqual(payload["target_lang"], "ZH-HANT")
+
+    def test_invalid_responses_are_rejected(self):
+        responses = [
+            [],
+            None,
+            {},
+            {"translations": {}},
+            {"translations": [None]},
+            {"translations": [{"text": None}]},
+            {"translations": [{"text": 1}]},
+            {"translations": [{"text": {"error": "broken"}}]},
+            {"translations": [{"text": "first"}, {"text": "second"}]},
+        ]
+        for payload in responses:
+            with (
+                self.subTest(payload=payload),
+                patch(
+                    "urllib.request.urlopen",
+                    return_value=io.BytesIO(json.dumps(payload).encode()),
+                ),
+                self.assertRaises(BackendError),
+            ):
+                DeepLBackend("test:fx").translate("hello", "en", "zh")
+
+    def test_invalid_json_and_encoding_are_rejected(self):
+        for payload in (b"not JSON", b"\xff"):
+            with (
+                self.subTest(payload=payload),
+                patch("urllib.request.urlopen", return_value=io.BytesIO(payload)),
+                self.assertRaisesRegex(BackendError, "invalid UTF-8 JSON"),
+            ):
+                DeepLBackend("test:fx").translate("hello", "en", "zh")
 
 
 if __name__ == "__main__":

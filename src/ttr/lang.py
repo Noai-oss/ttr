@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 LANG_SPEC_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9-]*)?:([a-zA-Z][a-zA-Z0-9-]*)?$")
 
 ZH_ALIASES = {"zh", "zh-cn", "zh-hans", "cn", "chinese"}
@@ -44,20 +43,17 @@ def parse_lang_spec(
 
 
 def require_lang(name: str, value: str | None) -> str:
-    if value is None or not str(value).strip():
+    if value is None or not value.strip():
         raise ValueError(f"{name} language missing; pass en:zh or set {name} in config")
-    return normalize_lang(str(value))
+    return normalize_lang(value)
 
 
 def normalize_lang(value: str) -> str:
     lowered = value.strip().lower()
+    if lowered == "auto" or re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", lowered) is None:
+        raise ValueError(f"invalid language: {value}; use an explicit language code")
     if lowered in ZH_ALIASES:
         return "zh"
     if lowered in EN_ALIASES:
         return "en"
     return lowered
-
-
-def resolve_pair(pair: LangPair, text: str) -> LangPair:
-    return pair
-

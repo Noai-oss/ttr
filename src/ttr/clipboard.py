@@ -6,10 +6,24 @@ import sys
 
 from .errors import ClipboardError
 
+POWERSHELL_UTF8 = (
+    "$ErrorActionPreference = 'Stop'; "
+    "[Console]::InputEncoding = [Console]::OutputEncoding = "
+    "[System.Text.UTF8Encoding]::new($false); "
+)
+
 
 def read_clipboard() -> str:
     if sys.platform == "win32":
-        return _run_read(["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"])
+        return _run_read(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                POWERSHELL_UTF8 + "[Console]::Out.Write((Get-Clipboard -Raw))",
+            ]
+        )
     if sys.platform == "darwin":
         return _run_read(["pbpaste"])
 
@@ -25,7 +39,16 @@ def read_clipboard() -> str:
 
 def write_clipboard(text: str) -> None:
     if sys.platform == "win32":
-        _run_write(["powershell", "-NoProfile", "-Command", "Set-Clipboard"], text)
+        _run_write(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                POWERSHELL_UTF8 + "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+            ],
+            text,
+        )
         return
     if sys.platform == "darwin":
         _run_write(["pbcopy"], text)
@@ -46,23 +69,31 @@ def write_clipboard(text: str) -> None:
 
 def _run_read(args: list[str]) -> str:
     try:
-        completed = subprocess.run(args, check=False, capture_output=True, text=True)
+        completed = subprocess.run(args, check=False, capture_output=True)
     except OSError as exc:
         raise ClipboardError(f"clipboard command failed to start: {exc}") from exc
 
     if completed.returncode != 0:
-        details = completed.stderr.strip() or "clipboard read failed"
+        details = (
+            completed.stderr.decode("utf-8", errors="replace").strip() or "clipboard read failed"
+        )
         raise ClipboardError(details)
-    return completed.stdout.rstrip("\r\n")
+    try:
+        return completed.stdout.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ClipboardError("clipboard command returned invalid UTF-8") from exc
 
 
 def _run_write(args: list[str], text: str) -> None:
     try:
-        completed = subprocess.run(args, input=text, check=False, capture_output=True, text=True)
+        completed = subprocess.run(
+            args, input=text.encode("utf-8"), check=False, capture_output=True
+        )
     except OSError as exc:
         raise ClipboardError(f"clipboard command failed to start: {exc}") from exc
 
     if completed.returncode != 0:
-        details = completed.stderr.strip() or "clipboard write failed"
+        details = (
+            completed.stderr.decode("utf-8", errors="replace").strip() or "clipboard write failed"
+        )
         raise ClipboardError(details)
-

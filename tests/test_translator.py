@@ -1,60 +1,66 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from ttr.backends.base import Backend, BackendTranslation
-from ttr.cache import TranslationCache
-from ttr.config import Config
+from ttr.cache import CacheHit, TranslationCache
+from ttr.config import CacheConfig, Config, DeepLConfig
+from ttr.errors import BackendError, CacheError
 from ttr.glossary import Glossary
 from ttr.lang import LangPair
-from ttr.translator import TranslateOptions, Translator
-
-
-class FakeBackend(Backend):
-    name = "fake"
-
-    def translate(self, text: str, source: str, target: str) -> BackendTranslation:
-        return BackendTranslation(text=f"fresh:{text}", backend=self.name)
-
-
-class FakeTranslator(Translator):
-    def _backend(self, backend_name: str) -> Backend:
-        return FakeBackend()
+from ttr.translator import Translator
 
 
 class TranslatorCacheTests(unittest.TestCase):
+    def setUp(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.cache = TranslationCache(root / "cache.sqlite")
+
     def test_online_translation_writes_cache_without_reading_existing_cache(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cache = TranslationCache(Path(tmp) / "cache.sqlite")
-            cache.set("en", "zh", "hello", "stale", "fake")
-            translator = FakeTranslator(Config(), cache=cache, glossary=Glossary())
+        self.cache.set("en", "zh", "hello", "stale", "mymemory")
+        translator = Translator(Config(), cache=self.cache)
+        with patch("ttr.backends.mymemory.MyMemoryBackend.translate", return_value="你好"):
+            result = translator.translate("hello", LangPair("en", "zh"))
+        self.assertEqual(result.text, "你好")
+        self.assertFalse(result.cached)
+        self.assertEqual(self.cache.get("en", "zh", "hello"), CacheHit("你好", "mymemory"))
 
-            result = translator.translate(
-                "hello",
-                LangPair("en", "zh"),
-                TranslateOptions(backend="fake", cache_enabled=True),
-            )
-            hit = cache.get("en", "zh", "hello", "fake")
+    def test_config_selects_backend_and_disables_cache(self):
+        translator = Translator(
+            Config(
+                backend="deepl",
+                deepl=DeepLConfig(api_key="test:fx"),
+                cache=CacheConfig(enabled=False),
+            ),
+            cache=self.cache,
+        )
+        with (
+            patch("ttr.backends.deepl.DeepLBackend.translate", return_value="你好") as deepl,
+            patch.object(translator.cache, "set") as write,
+        ):
+            result = translator.translate("hello", LangPair("en", "zh"))
+        self.assertEqual(result.backend, "deepl")
+        self.assertEqual(result.text, "你好")
+        deepl.assert_called_once_with("hello", "en", "zh")
+        write.assert_not_called()
 
-            self.assertEqual(result.text, "fresh:hello")
-            self.assertFalse(result.cached)
-            self.assertIsNotNone(hit)
-            self.assertEqual(hit.text, "fresh:hello")
+    def test_offline_cache_failure_is_reported(self):
+        self.cache.path.write_bytes(b"not a database")
+        translator = Translator(Config(), cache=self.cache, glossary=Glossary())
+        with self.assertRaisesRegex(CacheError, "cache.sqlite"):
+            translator.translate("hello", LangPair("en", "zh"), offline=True)
 
-    def test_online_translation_does_not_write_cache_when_disabled(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cache = TranslationCache(Path(tmp) / "cache.sqlite")
-            translator = FakeTranslator(Config(), cache=cache, glossary=Glossary())
-
-            translator.translate(
-                "hello",
-                LangPair("en", "zh"),
-                TranslateOptions(backend="fake", cache_enabled=False),
-            )
-
-            self.assertIsNone(cache.get("en", "zh", "hello", "fake"))
+    def test_backend_error_has_one_prefix(self):
+        translator = Translator(Config(cache=CacheConfig(enabled=False)))
+        with (
+            patch(
+                "ttr.backends.mymemory.MyMemoryBackend.translate",
+                side_effect=BackendError("request failed: timed out"),
+            ),
+            self.assertRaisesRegex(BackendError, "^mymemory: request failed: timed out$"),
+        ):
+            translator.translate("hello", LangPair("en", "zh"))
 
 
 if __name__ == "__main__":
     unittest.main()
-

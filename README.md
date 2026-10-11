@@ -1,8 +1,12 @@
 # ttr
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 `ttr` is a small terminal translator for personal developer workflows.
 
 It reads text from arguments, stdin, or the clipboard, writes translated text to stdout, and keeps diagnostics on stderr.
+
+Piped input and redirected output use UTF-8. Programs connected through a pipe should use the same encoding.
 
 ## Usage
 
@@ -20,8 +24,8 @@ ttr --clip --copy zh:en
 ttr --offline en:zh "repository"
 ttr --backend mymemory en:zh "hello"
 ttr --backend deepl en:zh "hello"
-ttr --backend libre en:zh "hello"
 ttr --json en:zh "hello"
+ttr --lines --json en:zh "hello"
 ```
 
 Language specs are predictable and never use language detection:
@@ -33,7 +37,11 @@ zh:       Chinese -> configured target
 (no spec) configured source -> configured target
 ```
 
-If a partial language spec is missing a configured value, `ttr` exits with a clear error.
+The default language pair is `en:zh`. An empty configured language is treated as unset; a partial language spec that needs it exits with a clear error. Language codes must be explicit; `auto` is not supported.
+
+When the source and target languages are the same, `ttr` returns the input unchanged without reading the cache or glossary or calling a backend.
+
+`--lines` translates each nonempty line independently and keeps blank lines between translated lines. With `--json`, `backend` names the backend used by all translated lines, or `mixed` when they differ. `cached` is true only when every nonempty line came from cache. Blank lines do not affect either field.
 
 ## Install
 
@@ -49,11 +57,12 @@ ttr en:zh "hello"
 
 - `mymemory`: default zero-key online backend using MyMemory.
 - `deepl`: DeepL API, requires an API key.
-- `libre`: local LibreTranslate service, explicit only.
 
 There is no `auto` backend. The default is just the configured `backend`, which is `mymemory` unless changed.
 
 Normal online translations always call the selected backend. On success, `ttr` writes the result to the local cache by default. It does not read cache during online translation, so stale cache entries cannot skip a backend request. Cache entries are backend-specific.
+
+If writing the cache fails, the translation is still printed and the command succeeds, with a warning on stderr. Offline cache read errors are reported as errors; the cache is not automatically repaired or deleted.
 
 ## Offline
 
@@ -63,12 +72,14 @@ Offline mode never calls a translation backend:
 cache -> glossary
 ```
 
-`ttr --offline` reads the local cache, then checks the glossary. If neither has a match, it exits with an offline miss error.
+`ttr --offline` reads the local cache, then checks the glossary for an exact match of the entire input. It does not replace words inside a sentence. If neither has a match, it exits with an offline miss error. With `--lines`, each nonempty line is matched independently.
+
+The glossary is read only after an offline cache miss. Each non-comment row must contain four nonempty tab-separated fields; malformed rows report the file and line number.
 
 Optional glossary path:
 
 - Windows: `%APPDATA%\ttr\glossary.tsv`
-- macOS/Linux: `~/.config/ttr/glossary.tsv`
+- macOS/Linux: `$XDG_CONFIG_HOME/ttr/glossary.tsv` or `~/.config/ttr/glossary.tsv`
 
 Format:
 
@@ -79,24 +90,7 @@ en	zh	cache	缓存
 
 ## MyMemory Limit
 
-MyMemory requests are capped at 480 UTF-8 bytes. If the input is longer, `ttr` exits with an error instead of splitting it automatically. Split long text yourself or choose another backend.
-
-## Local LibreTranslate
-
-Install and start a local service:
-
-```bash
-uv tool install libretranslate
-libretranslate --load-only en,zh --disable-web-ui
-```
-
-Then use:
-
-```bash
-ttr --backend libre en:zh "hello"
-```
-
-The default URL is `http://127.0.0.1:5000`.
+MyMemory requests are capped at 500 UTF-8 bytes. If the input is longer, `ttr` exits with an error instead of splitting it automatically. Split long text yourself or choose another backend.
 
 ## Configuration
 
@@ -119,14 +113,11 @@ email = "you@example.com"
 api_key = ""
 # url = "https://api-free.deepl.com/v2/translate"
 
-[libre]
-url = "http://127.0.0.1:5000"
-
 [cache]
 enabled = true
 ```
 
-Environment variables override config:
+Environment variables override config; `--backend` overrides both. Invalid field types and unrecognized boolean values are errors.
 
 ```text
 TTR_SOURCE_LANG
@@ -135,8 +126,7 @@ TTR_BACKEND
 TTR_MYMEMORY_EMAIL
 TTR_DEEPL_API_KEY
 TTR_DEEPL_URL
-TTR_LIBRE_URL
 TTR_CACHE=0
 ```
 
-
+`TTR_CACHE` accepts `1/0`, `true/false`, `yes/no`, or `on/off` (case-insensitive). In TOML, `cache.enabled` must be a boolean.

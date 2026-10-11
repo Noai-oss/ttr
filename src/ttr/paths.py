@@ -4,7 +4,6 @@ import os
 import sys
 from pathlib import Path
 
-
 APP_NAME = "ttr"
 
 
@@ -36,4 +35,3 @@ def glossary_file() -> Path:
 
 def cache_file() -> Path:
     return cache_dir() / "cache.sqlite"
-
