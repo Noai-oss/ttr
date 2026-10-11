@@ -3,6 +3,7 @@ import json
 import unittest
 from unittest.mock import patch
 
+from ttr import __version__
 from ttr.backends.deepl import (
     FREE_ENDPOINT,
     MAX_REQUEST_BYTES,
@@ -66,7 +67,7 @@ class DeepLTests(unittest.TestCase):
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.get_header("Authorization"), "DeepL-Auth-Key test-key:fx")
         self.assertEqual(request.get_header("Content-type"), "application/json; charset=utf-8")
-        self.assertEqual(request.get_header("User-agent"), "ttr/0.1.0")
+        self.assertEqual(request.get_header("User-agent"), f"ttr/{__version__}")
         self.assertEqual(data, {"text": ["hello"], "source_lang": "EN", "target_lang": "ZH"})
         urlopen.assert_called_once_with(request, timeout=3.5)
 
