@@ -8,8 +8,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import CacheError
 from .paths import cache_file
-
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS translations (
@@ -33,7 +33,7 @@ class CacheHit:
 
 
 def cache_key(source: str, target: str, text: str, backend: str) -> str:
-    payload = "\0".join([source, target, backend, text]).encode("utf-8")
+    payload = f"{source}\0{target}\0{backend}\0{text}".encode()
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -43,20 +43,19 @@ class TranslationCache:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        con = sqlite3.connect(self.path)
-        con.execute(SCHEMA)
         try:
-            yield con
-            con.commit()
-        finally:
-            con.close()
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            con = sqlite3.connect(self.path)
+            try:
+                con.execute(SCHEMA)
+                yield con
+                con.commit()
+            finally:
+                con.close()
+        except (OSError, sqlite3.Error) as exc:
+            raise CacheError(f"cache {self.path}: {exc}") from exc
 
-    def get(self, source: str, target: str, text: str, backend: str) -> CacheHit | None:
-        key = cache_key(source, target, text, backend)
-        return self._get_by_key(key)
-
-    def get_any(self, source: str, target: str, text: str) -> CacheHit | None:
+    def get(self, source: str, target: str, text: str) -> CacheHit | None:
         now = int(time.time())
         with self._connect() as con:
             row = con.execute(
@@ -76,21 +75,6 @@ class TranslationCache:
                 (now, row[0]),
             )
             return CacheHit(text=row[1], backend=row[2])
-
-    def _get_by_key(self, key: str) -> CacheHit | None:
-        now = int(time.time())
-        with self._connect() as con:
-            row = con.execute(
-                "SELECT translated, backend FROM translations WHERE key = ?",
-                (key,),
-            ).fetchone()
-            if row is None:
-                return None
-            con.execute(
-                "UPDATE translations SET used_at = ?, hits = hits + 1 WHERE key = ?",
-                (now, key),
-            )
-            return CacheHit(text=row[0], backend=row[1])
 
     def set(self, source: str, target: str, text: str, translated: str, backend: str) -> None:
         key = cache_key(source, target, text, backend)
@@ -120,4 +104,3 @@ class TranslationCache:
                 "SELECT COUNT(*), COALESCE(SUM(hits), 0) FROM translations"
             ).fetchone()
             return int(row[0]), int(row[1])
-

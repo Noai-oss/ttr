@@ -1,22 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from .backends import DeepLBackend, LibreBackend, MyMemoryBackend
-from .backends.base import Backend
+from .backends import DeepLBackend, MyMemoryBackend
 from .cache import TranslationCache
 from .config import Config
-from .errors import BackendError
+from .errors import BackendError, CacheError
 from .glossary import Glossary
-from .lang import LangPair, resolve_pair
+from .lang import LangPair
 from .result import TranslateResult
-
-
-@dataclass(frozen=True)
-class TranslateOptions:
-    backend: str = "mymemory"
-    offline: bool = False
-    cache_enabled: bool = True
 
 
 class Translator:
@@ -28,32 +18,53 @@ class Translator:
     ) -> None:
         self.config = config
         self.cache = cache or TranslationCache()
-        self.glossary = glossary or Glossary.load()
+        self.glossary = glossary
 
-    def translate(self, text: str, pair: LangPair, options: TranslateOptions) -> TranslateResult:
-        resolved = resolve_pair(pair, text)
+    def translate(self, text: str, pair: LangPair, *, offline: bool = False) -> TranslateResult:
+        if pair.source == pair.target:
+            return TranslateResult(text, pair.source, pair.target, "identity")
 
-        if resolved.source == resolved.target:
-            return TranslateResult(text, resolved.source, resolved.target, "identity")
+        if offline:
+            return self._translate_offline(text, pair)
 
-        if options.offline:
-            return self._translate_offline(text, resolved, read_cache=options.cache_enabled)
+        backend = self._backend()
+        try:
+            translated = backend.translate(text, pair.source, pair.target)
+        except BackendError as exc:
+            raise BackendError(f"{backend.name}: {exc}") from exc
 
-        result = self._translate_online(text, resolved, options.backend)
+        warnings = ()
+        if self.config.cache.enabled:
+            try:
+                self.cache.set(pair.source, pair.target, text, translated, backend.name)
+            except CacheError as exc:
+                warnings = (f"translation was not cached: {exc}",)
+        return TranslateResult(
+            translated, pair.source, pair.target, backend.name, warnings=warnings
+        )
 
-        if options.cache_enabled:
-            self.cache.set(
-                resolved.source,
-                resolved.target,
-                text,
-                result.text,
-                result.backend,
-            )
-        return result
+    def translate_lines(
+        self, text: str, pair: LangPair, *, offline: bool = False
+    ) -> TranslateResult:
+        lines = [
+            self.translate(line, pair, offline=offline) if line else None
+            for line in text.splitlines()
+        ]
+        results = [result for result in lines if result is not None]
+        backends = {result.backend for result in results}
+        backend = next(iter(backends)) if len(backends) == 1 else "mixed"
+        return TranslateResult(
+            text="\n".join(result.text if result is not None else "" for result in lines),
+            source=pair.source,
+            target=pair.target,
+            backend=backend if results else "identity",
+            cached=bool(results) and all(result.cached for result in results),
+            warnings=tuple(warning for result in results for warning in result.warnings),
+        )
 
-    def _translate_offline(self, text: str, pair: LangPair, read_cache: bool) -> TranslateResult:
-        if read_cache:
-            hit = self.cache.get_any(pair.source, pair.target, text)
+    def _translate_offline(self, text: str, pair: LangPair) -> TranslateResult:
+        if self.config.cache.enabled:
+            hit = self.cache.get(pair.source, pair.target, text)
             if hit is not None:
                 return TranslateResult(
                     text=hit.text,
@@ -63,56 +74,17 @@ class Translator:
                     cached=True,
                 )
 
-        exact = self.glossary.translate_exact(pair.source, pair.target, text)
+        glossary = self.glossary if self.glossary is not None else Glossary.load()
+        exact = glossary.translate_exact(pair.source, pair.target, text)
         if exact is not None:
             return TranslateResult(exact, pair.source, pair.target, "glossary")
 
-        applied = self.glossary.apply_terms(pair.source, pair.target, text)
-        if applied is not None:
-            return TranslateResult(applied, pair.source, pair.target, "glossary")
-
         raise BackendError("offline miss: no cache or glossary entry")
 
-    def _translate_online(self, text: str, pair: LangPair, backend_name: str) -> TranslateResult:
-        backend = self._backend(backend_name)
-        try:
-            translated = backend.translate(text, pair.source, pair.target)
-        except BackendError as exc:
-            raise BackendError(format_backend_error(backend.name, str(exc))) from exc
-
-        return TranslateResult(
-            translated.text,
-            pair.source,
-            pair.target,
-            translated.backend,
-        )
-
-    def _backend(self, backend_name: str) -> Backend:
-        backend_name = backend_name.lower()
+    def _backend(self) -> DeepLBackend | MyMemoryBackend:
+        backend_name = self.config.backend
         if backend_name == "mymemory":
             return MyMemoryBackend(email=self.config.mymemory.email)
         if backend_name == "deepl":
-            return self._deepl_backend()
-        if backend_name == "libre":
-            return self._libre_backend()
+            return DeepLBackend(api_key=self.config.deepl.api_key, url=self.config.deepl.url)
         raise BackendError(f"unknown backend: {backend_name}")
-
-    def _deepl_backend(self) -> DeepLBackend:
-        return DeepLBackend(api_key=self.config.deepl.api_key, url=self.config.deepl.url)
-
-    def _libre_backend(self) -> LibreBackend:
-        return LibreBackend(url=self.config.libre.url)
-
-
-def format_backend_error(backend_name: str, message: str) -> str:
-    lowered = message.lower()
-    prefixes = (
-        f"{backend_name} failed: ",
-        f"{backend_name} request failed: ",
-        f"{backend_name}: ",
-    )
-    for prefix in prefixes:
-        if lowered.startswith(prefix):
-            return f"{backend_name}: {message[len(prefix):]}"
-    return f"{backend_name}: {message}"
-

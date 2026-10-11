@@ -1,48 +1,34 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from ttr.cache import TranslationCache
+from ttr.cache import CacheHit, TranslationCache
 
 
 class CacheTests(unittest.TestCase):
-    def test_round_trip_is_backend_specific(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cache = TranslationCache(Path(tmp) / "cache.sqlite")
-            cache.set("en", "zh", "hello", "你好", "mymemory")
+    def setUp(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.cache = TranslationCache(root / "cache.sqlite")
 
-            hit = cache.get("en", "zh", "hello", "mymemory")
+    def test_round_trip_tracks_hits(self):
+        self.cache.set("en", "zh", "hello", "你好", "mymemory")
+        self.assertEqual(self.cache.get("en", "zh", "hello"), CacheHit("你好", "mymemory"))
+        self.assertIsNone(self.cache.get("en", "zh", "unknown"))
+        self.assertEqual(self.cache.stats(), (1, 1))
 
-            self.assertIsNotNone(hit)
-            self.assertEqual(hit.text, "你好")
-            self.assertEqual(hit.backend, "mymemory")
-
-    def test_backend_specific_lookup_does_not_cross_backends(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cache = TranslationCache(Path(tmp) / "cache.sqlite")
-            cache.set("en", "zh", "hello", "你好", "mymemory")
-
-            self.assertIsNone(cache.get("en", "zh", "hello", "deepl"))
-
-    def test_get_any_returns_cached_translation_for_offline_mode(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cache = TranslationCache(Path(tmp) / "cache.sqlite")
-            cache.set("en", "zh", "hello", "你好", "mymemory")
-
-            hit = cache.get_any("en", "zh", "hello")
-
-            self.assertIsNotNone(hit)
-            self.assertEqual(hit.text, "你好")
-            self.assertEqual(hit.backend, "mymemory")
+    def test_keeps_backends_separate_and_reads_latest(self):
+        with patch("ttr.cache.time.time", side_effect=[1, 2, 3]):
+            self.cache.set("en", "zh", "hello", "你好", "mymemory")
+            self.cache.set("en", "zh", "hello", "您好", "deepl")
+            self.assertEqual(self.cache.get("en", "zh", "hello"), CacheHit("您好", "deepl"))
+        self.assertEqual(self.cache.stats(), (2, 1))
 
     def test_clear(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cache = TranslationCache(Path(tmp) / "cache.sqlite")
-            cache.set("en", "zh", "hello", "你好", "test")
-            self.assertEqual(cache.clear(), 1)
-            self.assertIsNone(cache.get("en", "zh", "hello", "test"))
+        self.cache.set("en", "zh", "hello", "你好", "test")
+        self.assertEqual(self.cache.clear(), 1)
+        self.assertIsNone(self.cache.get("en", "zh", "hello"))
 
 
 if __name__ == "__main__":
     unittest.main()
-

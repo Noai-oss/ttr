@@ -4,9 +4,8 @@ import json
 import urllib.parse
 import urllib.request
 
-from .base import Backend, BackendTranslation
+from .. import __version__
 from ..errors import BackendError
-
 
 MYMEMORY_LANGS = {
     "zh": "zh-CN",
@@ -19,11 +18,7 @@ def api_lang(lang: str) -> str:
     return MYMEMORY_LANGS.get(lang, lang)
 
 
-def utf8_len(value: str) -> int:
-    return len(value.encode("utf-8"))
-
-
-class MyMemoryBackend(Backend):
+class MyMemoryBackend:
     name = "mymemory"
     endpoint = "https://api.mymemory.translated.net/get"
 
@@ -31,21 +26,17 @@ class MyMemoryBackend(Backend):
         self.email = email
         self.timeout = timeout
 
-    def translate(self, text: str, source: str, target: str) -> BackendTranslation:
+    def translate(self, text: str, source: str, target: str) -> str:
         if source == "auto":
             raise BackendError("mymemory requires a known source language")
 
-        size = utf8_len(text)
+        size = len(text.encode("utf-8"))
         if size > MAX_QUERY_BYTES:
             raise BackendError(
                 f"text too large for mymemory ({size} bytes > {MAX_QUERY_BYTES} bytes); "
                 "split the input or choose another backend"
             )
 
-        translated = self._translate_request(text, source=source, target=target)
-        return BackendTranslation(text=translated, backend=self.name)
-
-    def _translate_request(self, text: str, source: str, target: str) -> str:
         query = {
             "q": text,
             "langpair": f"{api_lang(source)}|{api_lang(target)}",
@@ -54,25 +45,31 @@ class MyMemoryBackend(Backend):
             query["de"] = self.email
 
         url = f"{self.endpoint}?{urllib.parse.urlencode(query)}"
-        request = urllib.request.Request(url, headers={"User-Agent": "ttr/0.1.0"})
+        request = urllib.request.Request(url, headers={"User-Agent": f"ttr/{__version__}"})
 
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                payload = response.read().decode("utf-8")
+                payload = response.read()
         except OSError as exc:
-            raise BackendError(f"mymemory request failed: {exc}") from exc
+            raise BackendError(f"request failed: {exc}") from exc
 
         try:
-            data = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise BackendError("mymemory returned invalid JSON") from exc
+            data = json.loads(payload.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise BackendError("returned invalid UTF-8 JSON") from exc
 
+        if not isinstance(data, dict):
+            raise BackendError("returned an invalid response; expected an object")
         status = data.get("responseStatus")
-        translated = (data.get("responseData") or {}).get("translatedText")
-
-        if status not in {200, "200"} or not translated:
+        if status not in (200, "200"):
             details = data.get("responseDetails") or "unknown error"
-            raise BackendError(f"mymemory failed: {details}")
+            raise BackendError(str(details))
 
-        return str(translated)
+        response_data = data.get("responseData")
+        if not isinstance(response_data, dict):
+            raise BackendError("returned invalid responseData; expected an object")
+        translated = response_data.get("translatedText")
+        if not isinstance(translated, str) or not translated:
+            raise BackendError("returned invalid translatedText; expected a nonempty string")
 
+        return translated

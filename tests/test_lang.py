@@ -32,7 +32,11 @@ class LangTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_lang_spec("zh:", default_source="en", default_target=None)
 
+    def test_auto_and_invalid_configured_languages_are_rejected(self):
+        for source in ("auto", "en zh", "en:", "en--us"):
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                parse_lang_spec(None, default_source=source, default_target="zh")
+
 
 if __name__ == "__main__":
     unittest.main()
-

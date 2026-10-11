@@ -7,14 +7,11 @@ import sys
 from . import __version__
 from .cache import TranslationCache
 from .clipboard import read_clipboard, write_clipboard
-from .config import Config, load_config
-from .errors import TLError
+from .config import BACKENDS, load_config
+from .errors import TTRError
 from .lang import looks_like_lang_spec, parse_lang_spec
-from .paths import cache_file, config_file, glossary_file
-from .translator import TranslateOptions, Translator
-
-
-BACKENDS = ("mymemory", "deepl", "libre")
+from .paths import cache_file, glossary_file
+from .translator import Translator
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
         if args and args[0] == "cache":
             return cache_cmd(args[1:])
         return translate_cmd(args)
-    except (TLError, ValueError) as exc:
+    except (TTRError, ValueError) as exc:
         print(f"ttr: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
@@ -41,71 +38,49 @@ def configure_stdio() -> None:
 
 
 def translate_cmd(argv: list[str]) -> int:
-    config = load_config()
-    parser = build_parser(config)
+    parser = build_parser()
     ns = parser.parse_args(argv)
-
-    if ns.version:
-        print(__version__)
-        return 0
+    config = load_config(backend=ns.backend)
 
     lang_spec, text_parts = extract_lang_and_text(ns.text)
     pair = parse_lang_spec(lang_spec, default_source=config.source, default_target=config.target)
     text = read_input(text_parts, use_clip=ns.clip)
 
     if not text:
-        raise TLError("no input text")
+        raise TTRError("no input text")
 
     translator = Translator(config)
-    options = TranslateOptions(
-        backend=ns.backend or config.backend,
-        offline=ns.offline,
-        cache_enabled=config.cache.enabled,
-    )
-
     if ns.lines:
-        outputs = []
-        for line in text.splitlines():
-            if not line:
-                outputs.append("")
-                continue
-            outputs.append(translator.translate(line, pair, options).text)
-        translated_text = "\n".join(outputs)
-        backend_name = "mixed"
-        cached = False
-        source = pair.source
-        target = pair.target
+        result = translator.translate_lines(text, pair, offline=ns.offline)
     else:
-        result = translator.translate(text, pair, options)
-        translated_text = result.text
-        backend_name = result.backend
-        cached = result.cached
-        source = result.source
-        target = result.target
+        result = translator.translate(text, pair, offline=ns.offline)
+
+    for warning in result.warnings:
+        print(f"ttr: warning: {warning}", file=sys.stderr)
 
     if ns.copy:
-        write_clipboard(translated_text)
+        write_clipboard(result.text)
 
     if ns.json:
         print(
             json.dumps(
                 {
-                    "text": translated_text,
-                    "source": source,
-                    "target": target,
-                    "backend": backend_name,
-                    "cached": cached,
+                    "text": result.text,
+                    "source": result.source,
+                    "target": result.target,
+                    "backend": result.backend,
+                    "cached": result.cached,
                 },
                 ensure_ascii=False,
             )
         )
     else:
-        print(translated_text)
+        print(result.text)
 
     return 0
 
 
-def build_parser(config: Config) -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ttr",
         description="Translate text from arguments, stdin, or clipboard.",
@@ -113,16 +88,16 @@ def build_parser(config: Config) -> argparse.ArgumentParser:
     parser.add_argument("text", nargs="*", help="optional [source]:[target] spec and text")
     parser.add_argument(
         "--backend",
-        choices=list(BACKENDS),
+        choices=BACKENDS,
         default=None,
-        help=f"translation backend (default: {config.backend})",
+        help="translation backend (defaults to the configured backend)",
     )
     parser.add_argument("--offline", action="store_true", help="read cache and glossary only")
     parser.add_argument("--clip", action="store_true", help="read input from clipboard")
     parser.add_argument("--copy", action="store_true", help="copy translated text to clipboard")
     parser.add_argument("--json", action="store_true", help="write structured JSON output")
     parser.add_argument("--lines", action="store_true", help="translate each line independently")
-    parser.add_argument("--version", action="store_true", help="print version and exit")
+    parser.add_argument("--version", action="version", version=__version__)
     return parser
 
 
@@ -158,8 +133,7 @@ def doctor() -> int:
     print(f"mymemory email: {'set' if cfg.mymemory.email else 'not set'}")
     print(f"deepl api key: {'set' if cfg.deepl.api_key else 'not set'}")
     print(f"deepl url: {cfg.deepl.url or 'auto'}")
-    print(f"libre url: {cfg.libre.url}")
-    print(f"config exists: {config_file().exists()}")
+    print(f"config exists: {cfg.path.exists()}")
     print(f"glossary exists: {glossary_file().exists()}")
     return 0
 
@@ -179,4 +153,3 @@ def cache_cmd(argv: list[str]) -> int:
     print(f"entries: {entries}")
     print(f"hits: {hits}")
     return 0
-

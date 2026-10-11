@@ -10,4 +10,4 @@ class TranslateResult:
     target: str
     backend: str
     cached: bool = False
-
+    warnings: tuple[str, ...] = ()
