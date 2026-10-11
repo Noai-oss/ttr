@@ -11,7 +11,9 @@ dependencies = []
 ttr = "ttr.cli:main"
 
 [dependency-groups]
-dev = []
+dev = [
+    "ruff>=0.17.0",
+]
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]
