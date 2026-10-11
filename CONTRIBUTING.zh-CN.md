@@ -23,3 +23,20 @@ uv build
 版本号由 `uv-dynamic-versioning` 从 Git 标签推导。`v0.1.0` 这样的标签对应版本 `0.1.0`；标签之后的提交生成下一个补丁版本的开发版本。尚无版本标签时，以 `0.0.0` 为基础推导版本。
 
 运行源码或测试前先执行 `uv sync --locked`，切换提交或添加版本标签后也需要重新执行。它会生成 `src/ttr/_version.py`，该文件随分发包发布，但由 Git 忽略。命令行和包元数据使用同一个生成的版本号，请勿手动修改生成文件。
+
+## 本地发布到 PyPI
+
+PyPI 发行包名为 `ttr-cli`。
+
+创建 [PyPI API token](https://pypi.org/manage/account/token/)，并在终端中将其设置为环境变量 `UV_PUBLISH_TOKEN`。
+
+将下面的 `0.1.0` 替换为新的发布版本，并使用空的输出目录：
+
+```bash
+git tag -a v0.1.0 -m "Release 0.1.0"
+uv build --out-dir dist/0.1.0
+uv publish dist/0.1.0/*
+git push origin v0.1.0
+```
+
+[`uv publish`](https://docs.astral.sh/uv/guides/package/#publishing-your-package) 会将指定文件上传到 PyPI。按版本单独存放构建产物，可避免上传旧版本文件。

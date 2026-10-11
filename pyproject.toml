@@ -1,11 +1,14 @@
 [project]
-name = "ttr"
+name = "ttr-cli"
 dynamic = ["version"]
 description = "A small terminal translator"
 readme = "README.md"
 authors = [{ name = "Noai-oss", email = "jiuwoxiao@outlook.com" }]
 requires-python = ">=3.12"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Noai-oss/ttr"
 
 [project.scripts]
 ttr = "ttr.cli:main"
