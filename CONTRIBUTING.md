@@ -16,7 +16,7 @@ uv run --no-sync ruff format --check src tests
 uv build
 ```
 
-[GitHub Actions](.github/workflows/ci.yml) runs tests on Linux, Windows, and macOS for pull requests to `main` and pushes to `main`. It also checks lint, formatting, and installation of the built wheel. Tests do not require translation API keys.
+[GitHub Actions](.github/workflows/ci.yml) runs for pull requests to `main` and pushes to `main`. It first checks lint, formatting, builds, and installation of the built wheel on Ubuntu. Only after these checks pass do tests run on Linux, Windows, and macOS. Tests do not require translation API keys.
 
 ## Versioning
 

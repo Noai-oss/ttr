@@ -16,7 +16,7 @@ uv run --no-sync ruff format --check src tests
 uv build
 ```
 
-向 `main` 提交 PR 或推送代码时，[GitHub Actions](.github/workflows/ci.yml) 会在 Linux、Windows 和 macOS 上运行测试，同时检查代码规范、格式以及构建出的 wheel 能否安装运行。测试无需翻译 API 密钥。
+向 `main` 提交 PR 或推送代码时，[GitHub Actions](.github/workflows/ci.yml) 会先在 Ubuntu 上检查代码规范、格式、构建以及 wheel 能否安装运行。全部通过后，才在 Linux、Windows 和 macOS 上运行测试。测试无需翻译 API 密钥。
 
 ## 版本管理
 
