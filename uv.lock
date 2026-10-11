@@ -28,7 +28,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ttr"
+name = "ttr-cli"
 source = { editable = "." }
 
 [package.dev-dependencies]

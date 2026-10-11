@@ -2,9 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-`ttr` is a small terminal translator for personal developer workflows.
-
-It reads text from arguments, stdin, or the clipboard, writes translated text to stdout, and keeps diagnostics on stderr.
+`ttr` is a small terminal translator. It reads text from arguments, stdin, or the clipboard, writes translations to stdout, and keeps diagnostics on stderr.
 
 Piped input and redirected output use UTF-8. Programs connected through a pipe should use the same encoding.
 
@@ -28,16 +26,7 @@ ttr --json en:zh "hello"
 ttr --lines --json en:zh "hello"
 ```
 
-Language specs are predictable and never use language detection:
-
-```text
-en:zh     English -> Chinese
-:zh       configured source -> Chinese
-zh:       Chinese -> configured target
-(no spec) configured source -> configured target
-```
-
-The default language pair is `en:zh`. An empty configured language is treated as unset; a partial language spec that needs it exits with a clear error. Language codes must be explicit; `auto` is not supported.
+The default language pair is `en:zh`; omitted languages come from configuration, as shown above. Language detection (`auto`) is not supported. Empty configured languages count as unset; if a required language is missing, the command fails.
 
 When the source and target languages are the same, `ttr` returns the input unchanged without reading the cache or glossary or calling a backend.
 
@@ -45,10 +34,22 @@ When the source and target languages are the same, `ttr` returns the input uncha
 
 ## Install
 
+The distribution is named `ttr-cli`; the command is `ttr`.
+
+From PyPI (available after the first release):
+
 ```bash
+uv tool install ttr-cli
+```
+
+From a local checkout:
+
+```bash
+# Run from this checkout
 uv sync
 uv run ttr en:zh "hello"
 
+# Install as a standalone command
 uv tool install .
 ttr en:zh "hello"
 ```
@@ -57,42 +58,23 @@ For development checks, builds, and versioning, see [Contributing](CONTRIBUTING.
 
 ## Backends
 
-- `mymemory`: default zero-key online backend using MyMemory.
+- `mymemory`: default backend, requires no API key. Input is limited to 500 UTF-8 bytes per request; longer input is rejected without automatic splitting.
 - `deepl`: DeepL API, requires an API key.
 
-There is no `auto` backend. The default is just the configured `backend`, which is `mymemory` unless changed.
+Automatic backend selection is not supported. For service quotas and official references, see [Service limits](docs/limit.md).
 
-Normal online translations always call the selected backend. On success, `ttr` writes the result to the local cache by default. It does not read cache during online translation, so stale cache entries cannot skip a backend request. Cache entries are backend-specific.
-
-If writing the cache fails, the translation is still printed and the command succeeds, with a warning on stderr. Offline cache read errors are reported as errors; the cache is not automatically repaired or deleted.
+Online translations call the selected backend and, by default, cache successful results separately for each backend. They never read cached results. Cache write failures produce a warning on stderr while still returning the translation successfully.
 
 ## Offline
 
-Offline mode never calls a translation backend:
+`--offline` never calls a backend. It checks the cache first and only reads the glossary on a cache miss, matching the entire input exactly. A miss in both sources or a cache read error causes the command to fail.
 
-```text
-cache -> glossary
-```
-
-`ttr --offline` reads the local cache, then checks the glossary for an exact match of the entire input. It does not replace words inside a sentence. If neither has a match, it exits with an offline miss error. With `--lines`, each nonempty line is matched independently.
-
-The glossary is read only after an offline cache miss. Each non-comment row must contain four nonempty tab-separated fields; malformed rows report the file and line number.
-
-Optional glossary path:
-
-- Windows: `%APPDATA%\ttr\glossary.tsv`
-- macOS/Linux: `$XDG_CONFIG_HOME/ttr/glossary.tsv` or `~/.config/ttr/glossary.tsv`
-
-Format:
+Place the optional `glossary.tsv` beside `config.toml` (see [Configuration](#configuration)). Each entry has four nonempty tab-separated fields: source language, target language, original text, and translation. Blank lines and `#` comments are ignored; malformed rows report the file and line number.
 
 ```tsv
 en	zh	repository	仓库
 en	zh	cache	缓存
 ```
-
-## MyMemory Limit
-
-MyMemory requests are capped at 500 UTF-8 bytes. If the input is longer, `ttr` exits with an error instead of splitting it automatically. Split long text yourself or choose another backend.
 
 ## Configuration
 
@@ -119,7 +101,7 @@ api_key = ""
 enabled = true
 ```
 
-Environment variables override config; `--backend` overrides both. Invalid field types and unrecognized boolean values are errors.
+Environment variables override config; `--backend` overrides both.
 
 ```text
 TTR_SOURCE_LANG
